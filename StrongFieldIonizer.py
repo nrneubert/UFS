@@ -51,6 +51,11 @@ class StrongFieldIonizer :
 
     """ --- Main methods --- """
 
+    def get_k_space(self, k_range, N_ks) : 
+        k_ys = np.linspace(k_range[0], k_range[1], N_ks)
+        k_zs = np.linspace(k_range[0], k_range[1], N_ks)
+        return k_ys, k_zs
+
     # Trivial time evolution phase 
     def time_evolution(self, tp: Union[float, np.ndarray], t0: float) : 
         self.check_type_error(tp, 'tp')
@@ -105,7 +110,7 @@ class StrongFieldIonizer :
         # beta_list: (len(tps),)
         return (alpha_list, beta_list)
 
-    def calculate_matrix_elements(self, k_range: np.array, N_ks: int) : 
+    def calculate_matrix_elements(self, k_range: np.array, N_ks: int, progress_bar=True) : 
         self.check_time_parameters()
 
         # Precompute alpha and beta
@@ -114,13 +119,13 @@ class StrongFieldIonizer :
         A_tgrid = self.A(self.t_axis) # each column is Ax(t1), Ay(t1), Az(t1)
 
         # k-vectors
-        k_ys = np.linspace(k_range[0], k_range[1], N_ks)
-        k_zs = np.linspace(k_range[0], k_range[1], N_ks)
+        k_ys, k_zs = self.get_k_space(k_range, N_ks)
 
         result = np.zeros((N_ks, N_ks))
 
-        total = N_ks ** 2
-        pbar = tqdm(total=total, desc="Building matrix...", unit=' elements')
+        if(progress_bar) : 
+            total = N_ks ** 2
+            pbar = tqdm(total=total, desc="Building matrix...", unit=' elements')
 
         for i, k_y in enumerate(k_ys) : 
             for j, k_z in enumerate(k_zs) : 
@@ -142,8 +147,112 @@ class StrongFieldIonizer :
 
                 result[i,j] = np.abs(res)**2
 
-                pbar.update(1)
+                if(progress_bar) : pbar.update(1)
         
         return A_tgrid, k_ys, k_zs, result     
 
-    
+import ast
+import gzip
+
+def load_sfi_results(fname):
+    param_vals     = []
+    all_A_ts     = []
+    all_matrices = []
+    k_range = None
+    N_ks    = None
+
+    with gzip.open(fname, "rt") as f:
+        lines = [ln.rstrip("\n") for ln in f]
+
+    i = 0
+    # ---- First find the grid settings ----
+    while i < len(lines):
+        if lines[i].startswith("### Grid settings"):
+            # next line: k_range = [...]
+            k_range = ast.literal_eval(lines[i+1].split("=",1)[1].strip())
+            # next line: N_ks    = 300
+            N_ks    = int(lines[i+2].split("=",1)[1].strip())
+            i += 3
+            break
+        i += 1
+
+    if k_range is None or N_ks is None:
+        raise ValueError("Could not find grid settings in file.")
+
+    # ---- Now parse each frame ----
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("--- Frame"):
+            # Extract param "
+            param = float(line.split("param =")[1].split()[0])
+            param_vals.append(param)
+            i += 1
+
+            # Skip until we hit "A_ts (3 rows):"
+            while not lines[i].startswith("A_ts"):
+                i += 1
+            i += 1  # now at first A_ts row
+
+            # Read 3 rows of A_ts
+            A_rows = []
+            for _ in range(3):
+                row = [float(x) for x in lines[i].split(",")]
+                A_rows.append(row)
+                i += 1
+            all_A_ts.append(np.array(A_rows))
+
+            # Skip until we hit "matrix"
+            while not lines[i].startswith("matrix"):
+                i += 1
+            i += 1  # now at first matrix row
+
+            # Read N_ks rows of the matrix
+            M = []
+            for _ in range(N_ks):
+                # split on whitespace
+                row = [float(x) for x in lines[i].split()]
+                M.append(row)
+                i += 1
+            all_matrices.append(np.array(M))
+
+        else:
+            i += 1
+
+    return {
+        "k_range":      k_range,
+        "N_ks":         N_ks,
+        "param_vals":     np.array(param_vals),
+        "all_A_ts":     all_A_ts,
+        "all_matrices": all_matrices
+    }
+
+
+def write_sfi_results(outfname: str, simulator: StrongFieldIonizer, k_range, N_ks, parameters, all_A_ts, all_matrices) :
+    with gzip.open(outfname, "wt") as f:
+        f.write("### Configuration ###\n")
+        f.write(simulator.__repr__() + "\n\n")
+
+        f.write("### Grid settings ###\n")
+        f.write(f"k_range = {k_range}\n")
+        f.write(f"N_ks    = {N_ks}\n\n")
+
+        # 3) Data for each phi
+        for i, param in enumerate(parameters):
+            f.write(f"--- Frame {i+1}/{len(parameters)}: param = {param:.6f} ---\n")
+            
+            # A_ts has shape (3, N_time)
+            A_ts = all_A_ts[i]
+            # Write each component as a comma-separated line
+            f.write("A_ts (3 rows):\n")
+            for comp in range(3):
+                row = A_ts[comp]
+                f.write(", ".join(f"{val:.6e}" for val in row) + "\n")
+            
+            # matrix is N_ks × N_ks
+            matrix = all_matrices[i]
+            f.write("matrix (N_ks × N_ks):\n")
+            # you can choose delimiter; here space
+            for row in matrix:
+                f.write(" ".join(f"{val:.6e}" for val in row) + "\n")
+            
+            f.write("\n")  # blank line before next block
