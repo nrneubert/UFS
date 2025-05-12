@@ -1,7 +1,7 @@
 
 import attr
 from tqdm import tqdm
-from typing import Union
+from typing import Union, Callable, Optional
 
 import numpy as np
 from scipy.integrate import simpson
@@ -17,10 +17,12 @@ class StrongFieldIonizer :
 
     wl: float = 0.057
     epsilon: float = 1
-    intensity: float = 10e13 / 3.51e16
+    intensity: float = 1e14 / 3.51e16
     phi: float = 0
     Nc: int = 1
     E0: float = -0.5
+
+    user_envelope: Optional[Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]]] = None
 
     # Computed parameters
     @property
@@ -76,7 +78,12 @@ class StrongFieldIonizer :
     def A(self, t: Union[float, np.ndarray]) : 
         self.check_type_error(t, 't')
 
-        prefac = self.A0 * self.get_envelope(t) / ( np.sqrt( 1 + self.epsilon**2) )
+        if(self.user_envelope is None) : 
+            envelope = self.get_envelope(t)
+        else : 
+            envelope = self.user_envelope(t)
+
+        prefac = self.A0 * envelope / ( np.sqrt( 1 + self.epsilon**2) )
 
         vec = np.stack([
                         np.zeros_like(t), 
