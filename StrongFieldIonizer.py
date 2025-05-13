@@ -11,10 +11,6 @@ class StrongFieldIonizer :
     """ --- Constructor --- """
 
     # Input parameters
-    t_end: float = None
-    t_start: float = None
-    N_time: int = None
-
     wl: float = 0.057
     epsilon: float = 1
     intensity: float = 1e14 / 3.51e16
@@ -22,11 +18,18 @@ class StrongFieldIonizer :
     Nc: int = 1
     E0: float = -0.5
 
+    t_end: float = None
+    t_start: float = None
+    N_time: int = None
+
     user_envelope: Optional[Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]]] = None
 
     # Computed parameters
     @property
-    def t_axis(self) : return np.linspace(self.t_start, self.t_end, self.N_time)
+    def dt(self) : return ((2*np.pi)/self.wl) / self.N_time
+
+    @property
+    def t_axis(self) : return np.arange(self.t_start, self.t_end + self.dt, self.dt)
 
     @property
     def T(self): return self.Nc * 2 * np.pi / self.wl
@@ -141,7 +144,7 @@ class StrongFieldIonizer :
                 
                 prod = np.dot(A_tgrid.transpose(), k_vector)
                 
-                state = np.exp( -1j*0.5*k2*(self.t_axis - self.t_start) 
+                state = np.exp( 1j*0.5*k2*(self.t_axis - self.t_start) 
                             + 1j*np.dot(alphas, k_vector) 
                             + 1j*0.5*betas ) * self.time_evolution(self.t_axis, self.t_start)
 
